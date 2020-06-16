@@ -1,0 +1,100 @@
+Mapreduce中如果需要对数据进行重新排序分组需要自定义分组
+GroupingComparator起效的位置在mapper之后，Reduce之前
+或者排序的粒度必须要细，比如一段数据拍完之后是 
+				  分组就分为三个组  如果把排序粒度分细，比如同时判断00001和00002的大小  结果就是 
+00001 pl1 228 			000001 pl1 228
+00002 pl2 227			000001 pl2 226
+0001 pl2 226			000002 pl1 227 
+这样就能实现自己想要的排序了 需要实现接口WritableComparable<类名>在这里面进行设置比较订单compareTo，toString和设置序列化
+compareTo方法比较中可以先比较两个000001，0000002的值，如果两个都是0000001，则就进行比较后面的228和226
+如果不是相等的，则就按照正常顺序排序，不进行比较后面的226
+
+然后在创建无参接口实现WritableComparable 在这里面设置compare方法   和创建无参的构造方法并返回类名和true，因为程序中传递的不是以对象为
+单位的，那样会早场巨大的低效率，是创建了GroupingComparator中的无参构造中的方法中的两个用来交换对象的 ，不然GriupingComparator中会比较
+不起来，爆出空指针的错误    
+
+
+ 	1	mapreduce中数据进入之后框架第一步是数据输入接口 ：inputfFormat------------更换或重写需要在Dirver中设置输入格式，如:(job.setInputFormatClass(KeyValueTextInputFormat.class))//里面也可以
+		1 默认是TextInputFormat（抽象类,没有实现全部的父类抽象方法）
+		TextInputFormat的功能是：	默认切片方法：一次读一行文本，然后将改行的起始偏移量作为Key,行内容作为value，返回
+				K/V方法是LineRecordReader(默认)的K/V方法
+				如：文件内容  Love  you  
+					          Baby  haha
+				则：k/v:  	   0,Love you
+							   9，Baby haha
+		2	KeyValueTextInputFormat (与TextInputFormat的区别就是划分方式变了)
+			KeyValueTextInputFormat的功能是 ： 每一行均为一条记录，被分割符分隔为Key，value。默认的分割符是 TAB(\t);
+																						设置分隔符的方法：conf.set(KeyValueTextInputFormat.KEY_VALUE_SEPERATOR，",");//设置分隔符为,
+		3   NlineInputFormat  （与TextInputFormat的区别就是切片方式变了，可以自定义切片格式）
+			NlineInputFormat的功能是： 自定义切片方式，N行一片，即输入文件总行数，除以n =切片数
+									K/V方法是默认的切片方法
+								例：
+								Rich leaning form
+								Intelligent learning engline
+								如果N=1;则每个输入分片包含一行，本文件可以划分为两个切片
+								（0，Rich leaning form)和(19,Intelligent learning engline);
+		4   CombineTextInputFormat 专门针对小文件设置的
+			CombineTextInputFormat的功能是: 可以把多个小文件合并成一个切片处理，提高处理效率
+										切片过程：判断虚拟存储文件是否大于setMapInputFormat的值，如果大于，则单独分成一个切片，如果不大于则与下一个文件合并，共同形成一个切片
+	2	InputforMet出来的数据到逻辑处理接口Mapper中
+			根据业务需求实现三个方法 map() setup() cleanup()
+			map(): 是主要的数据处理函数， 运用逻辑代码将k,v值通过context.write(k,v)送到下一步中
+			setup():在map之前执行的，此方法被Mapreduce框架仅执行了一次，在执行Map任务前，进行简单的变量设置和初始化功能，不然一些初始化工作放进Map中导致Mapper任务在解析每一行输入时都会进行 资源初始化工作，导致重复，任务运行效率不高
+			cleanup():在执行完毕Map任务之后，执行的，此方法被MapReduce框架只执行一次，一般用于相关的变量或资源的释放工作，如过将释放资源放进map中会导致每一次Mapper任务在解析，处理每一行文本后释放资源，而且下一行文本解析前还要重复初始化，导致反复重复，程序 运行效率不高
+	3	Mapper出来的数据到环形缓冲区Partitioner分区，环形缓冲区到达80%时将会对数据进行存盘，
+			1	有默认实现的HashPartition,逻辑是根据Key的哈希值和numReduces来返回一个分区号;key.hashCode()&Integer.MAXVALUE % numReduces(Reduce的数量),用户没有办法选中那些数据存储到哪个分区
+			2	自定义分区(自定义Partitioner分区)  自定义Partitioner继承自Partitioner,重写getPartitioner()方法，可以自定义哪些数据分到哪个分区文件上,设置驱动类和根据自定义Partitioner逻辑设置相应数量的ReduceTask；ReduceTask是自定义Partitioner中的存储文件个数
+	3   分区完成之后进入Comparable排序，
+			1	排序会默认按照Key来进行快速排序，保证输出的每个文件内部有序，通常只有一个Reduce
+			2	当我们用自定义的对象作为key来输出时，就必须要实现WritableComparable接口，重写compareTo()方法
+			3	部分排序：对于环形缓冲区出来的数据进行部分排序
+			4	二次排序：排序的条件有两个，如先按照订单排序，如果订单的价格一样则再按照价格排序
+	4	排序完之后可以进行Combiner排序
+				Combiner排序是进行局部的汇总，提高程序执行效率，减轻Mapper段的IO传输，Combiner工作在每一个MapTask上，而Reduer是接受全局的Mapper的输出结果，运用Combiner不应该影响业务逻辑，可以不使用，父类是Reducer
+	5	数据到达Mapper段进行输出
+				map段会对去往相应分区的数据放入ReduceTask，ReduceTask会对数据进行归并，加成一个整个的数据，然后往Reduce中输入，边输入边分组，分组调用的是GroupingComparator分组比较器
+				key不相同 则就分为不同的组
+				自定义GroupingComparator辅助排序：
+					首先自定义类继承WritableComparator,
+					然后重写compare()方法，compare方法中设置比较的业务逻辑，比如二次排序中的价格排序，需要对数据进行数据转换，将WritableComparable类型转换为自定义的WritableComparable的类名
+					然后创建一个构造将比较的类传给父类：如 protected OrderGroupComparator(){ super(OrderBean.class,true)}
+	6	最后进行Reducer接口
+			根据业务逻辑需求需要实现其中的三个方法：reduce(),setup(),cleanup();三个方法使用方法和Mapper接口中的类似
+	7 	数据进入OutputFormat
+		1	默认实现方法是TextOutputFormat，功能逻辑是：将每一个K/V值，像目标文件输出一行，键和值可以为任何类型，因为OutputFormat会调用ToString将它转换为字符串
+		2	SequenceFileOutputFormat：将SequenceFileOutputFormat输出作为后续MapReduce任务的输入,这是很好的输入格式，格式紧凑，,方便进行压缩 
+			SequenceOutputFormat将本数据作为一个临时文件保存，下一个MapReduce任务使用SequenceFileInputFormat输入将会把数据,类型，无缝的贴合进来，
+		3	自定义OutputFormat： 
+				1	自定义一个类继承FileOutputFormat，
+				2	FiLEOutputFormat的RedcordWriter中返回新的RecordWritable类
+				2	改写输出方法Write()
+
+
+	保留*为小数：							doublepi=3.1415927;　//圆周率 
+
+　　　　			System.out.println(newDecimalFormat("0").format(pi));　　　//3 　　　　//取一位整数 
+
+　　　　			System.out.println(newDecimalFormat("0.00").format(pi));　//3.14 	　　　　//取一位整数和两位小数 
+　　　　
+　　　　			System.out.println(new DecimalFormat("00.000").format(pi));// 03.142 	//取两位整数和三位小数，整数不足部分以0填补。 
+　
+　　　				System.out.println(newDecimalFormat("#").format(pi));　　　//3 　　　//取所有整数部分 
+	
+　　　				System.out.println(new DecimalFormat("#.##%").format(pi));　//314.16% 　　　　//以百分比方式计数，并取两位小数 
+ 
+　　 　											longc=299792458;　　//光速 
+　　　
+　　　				System.out.println(newDecimalFormat("#.#####E0").format(c));　//2.99792E8 //显示为科学计数法，并取五位小数 
+　　　　
+　　　				System.out.println(newDecimalFormat("00.####E0").format(c));　//29.9792E7 //显示为两位整数的科学计数法，并取四位小数 
+　　　　
+　　　				System.out.println(newDecimalFormat(",###").format(c));　　　//299,792,458 //每三位以逗号进行分隔。 
+　
+　　　　			System.out.println(newDecimalFormat("光速大小为每秒,###米。").format(c)); 　　　//将格式嵌入文本 
+
+
+		切片是input	map拿数据是split  自己切分是map
+		reducer拿数据是shuffle   reduce自己去做数据的整合 是reduce reducer输出叫finalize
+  
+
+ 

@@ -1,0 +1,447 @@
+1.第一种实现的方式是：将数据封装到list中，使用集合的排序方法实现排序在cleanup方法中加入代码实现排序；
+	所以这里只适合把所有的数据都放在一个pojo中；
+2.第二种是将pojo类作为key从Mapper传递到Reducer，然后值作为key，然后遍历进行传递。
+3.共同点：两种方式都要实现WritableComparable接口，重写compareTo()方法，然后指定两个int类型的数据相减，
+	或者也可以指定多字段进行排序
+
+1.Pojo类（用来实现排序的，而且这里的数据是来自之前统计的结果，所以只有两个字段：技能点、数量）
+package com.data.test.Mysql_skill;
+import org.apache.hadoop.io.WritableComparable;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
+
+/*
+ * 自定义的类作为MapReduce传输对象的时候，必须序列化,实现WritableComparable 接口
+ * 泛型为map输出的key的类型
+ * 可以把需要的字段都封装过来，map输出的value就可以用NullWritable来代替
+ * 任何用作键来使用的类都应该实现WritableComparable接口
+ */
+
+public class outPojo implements WritableComparable<outPojo> {
+    String skill;
+    int count;
+
+    public outPojo() {
+    }
+
+    public outPojo(String skill, int count) {
+        this.skill = skill;
+        this.count = count;
+    }
+
+    public String getSkill() {
+        return skill;
+    }
+
+    public void setSkill(String skill) {
+        this.skill = skill;
+    }
+
+    public int getCount() {
+        return count;
+    }
+
+    public void setCount(int count) {
+        this.count = count;
+    }
+	// 序列化的方法:对象 ===> 二进制
+	// map发到reduce端的的时候先序列化
+    @Override
+    public void write(DataOutput out) throws IOException {
+        out.writeUTF(skill);
+        out.writeInt(count);
+    }
+	// 反序列化的方法，到reduce端的时候进行反序列化,和序列化的顺序一定要一致
+    @Override
+    public void readFields(DataInput in) throws IOException {
+        this.skill = in.readUTF();
+        this.count = in.readInt();
+    }
+	// 也就是说可以指定多重排序方式，不仅仅是单一的字段排序
+    @Override
+    public int compareTo(outPojo o) {
+        // 第一先按数量（count字段）降序排列
+		int temp = o.getCount() - this.count;
+		// 如果第一个字段相同，在比较技能字段
+		if(tmp==0){
+			tmp = o.skill -this.skill;
+			return tmp;
+		}
+		return tmp;
+    }
+    // 控制当前对象被传递的时候，输出的格式，可以全部输出也可以只输出一部分（这里只是输出了其中的一个字段）
+    // 实际上这样就可以在Reducer过程中输出的时候选择类型为当前实体类类型。
+    // 也就是说如果要输出，多个值的时候，也可以封装在这样一个实体类中然后一起输出，不过就是得实现序列化（Writable）接口
+    @Override
+    public String toString() {
+        return String.valueOf(count);
+    }
+}
+
+2.Pojo类（用来实现从Mysql中读取数据的，所以不仅实现序列化接口Writable，还实现了操作数据库的DBWritable）
+// 由于这里的测试的数据来源是mysql，所以还多了一个实体类
+package com.data.test.Mysql_skill;
+
+import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.mapreduce.lib.db.DBWritable;
+
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+public class sourcePojo implements Writable, DBWritable {
+    int id; // 编号
+    String city; //城市
+    String company; // 公司名
+    String companySize;// 公司人数
+    String companyType;// 公司性质
+    String edulevel;// 学历要求
+    String emplType;// 全职/兼职
+    String extractSkillTag;// 当前岗位需要的技能
+    String jobName;// 岗位名称
+    String salary;// 薪资
+    String welfare;// 福利
+    String workingExp;//工作年限要求
+
+    public sourcePojo() {
+    }
+
+    public sourcePojo(int id, String city, String company, String companySize, String companyType, String edulevel, String emplType, String extractSkillTag, String jobName, String salary, String welfare, String workingExp) {
+        this.id = id;
+        this.city = city;
+        this.company = company;
+        this.companySize = companySize;
+        this.companyType = companyType;
+        this.edulevel = edulevel;
+        this.emplType = emplType;
+        this.extractSkillTag = extractSkillTag;
+        this.jobName = jobName;
+        this.salary = salary;
+        this.welfare = welfare;
+        this.workingExp = workingExp;
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public void setId(int id) {
+        this.id = id;
+    }
+
+    public String getCity() {
+        return city;
+    }
+
+    public void setCity(String city) {
+        this.city = city;
+    }
+
+    public String getCompany() {
+        return company;
+    }
+
+    public void setCompany(String company) {
+        this.company = company;
+    }
+
+    public String getCompanySize() {
+        return companySize;
+    }
+
+    public void setCompanySize(String companySize) {
+        this.companySize = companySize;
+    }
+
+    public String getCompanyType() {
+        return companyType;
+    }
+
+    public void setCompanyType(String companyType) {
+        this.companyType = companyType;
+    }
+
+    public String getEdulevel() {
+        return edulevel;
+    }
+
+    public void setEdulevel(String edulevel) {
+        this.edulevel = edulevel;
+    }
+
+    public String getEmplType() {
+        return emplType;
+    }
+
+    public void setEmplType(String emplType) {
+        this.emplType = emplType;
+    }
+
+    public String getExtractSkillTag() {
+        return extractSkillTag;
+    }
+
+    public void setExtractSkillTag(String extractSkillTag) {
+        this.extractSkillTag = extractSkillTag;
+    }
+
+    public String getJobName() {
+        return jobName;
+    }
+
+    public void setJobName(String jobName) {
+        this.jobName = jobName;
+    }
+
+    public String getSalary() {
+        return salary;
+    }
+
+    public void setSalary(String salary) {
+        this.salary = salary;
+    }
+
+    public String getWelfare() {
+        return welfare;
+    }
+
+    public void setWelfare(String welfare) {
+        this.welfare = welfare;
+    }
+
+    public String getWorkingExp() {
+        return workingExp;
+    }
+
+    public void setWorkingExp(String workingExp) {
+        this.workingExp = workingExp;
+    }
+    // 序列化
+    @Override
+    public void write(DataOutput out) throws IOException {
+        out.writeInt(this.id);
+        out.writeUTF(this.city);
+        out.writeUTF(this.company);
+        out.writeUTF(this.companySize);
+        out.writeUTF(this.companyType);
+        out.writeUTF(this.edulevel);
+        out.writeUTF(this.emplType);
+        out.writeUTF(this.extractSkillTag);
+        out.writeUTF(this.jobName);
+        out.writeUTF(this.salary);
+        out.writeUTF(this.welfare);
+        out.writeUTF(this.workingExp);
+    }
+    // 反序列化
+    @Override
+    public void readFields(DataInput in) throws IOException {
+        this.id = in.readInt();
+        this.city = in.readUTF();
+        this.company = in.readUTF();
+        this.companySize = in.readUTF();
+        this.companyType = in.readUTF();
+        this.edulevel = in.readUTF();
+        this.emplType = in.readUTF();
+        this.extractSkillTag = in.readUTF();
+        this.jobName = in.readUTF();
+        this.salary = in.readUTF();
+        this.welfare = in.readUTF();
+        this.workingExp = in.readUTF();
+    }
+    // 注意：PreparedStatement的索引是从1开始的。
+    @Override
+    public void write(PreparedStatement statement) throws SQLException {
+        statement.setInt(1,this.id);
+        statement.setString(2,this.city);
+        statement.setString(3,this.company);
+        statement.setString(4,this.companySize);
+        statement.setString(5,this.companyType);
+        statement.setString(6,this.edulevel);
+        statement.setString(7,this.emplType);
+        statement.setString(8,this.extractSkillTag);
+        statement.setString(9,this.jobName);
+        statement.setString(10,this.salary);
+        statement.setString(11,this.welfare);
+        statement.setString(12,this.workingExp);
+    }
+    // 同样注意这里的索引是从1开始的
+    @Override
+    public void readFields(ResultSet resultSet) throws SQLException {
+        this.id = resultSet.getInt(1);
+        this.city = resultSet.getString(2);
+        this.company = resultSet.getString(3);
+        this.companySize = resultSet.getString(4);
+        this.companyType = resultSet.getString(5);
+        this.edulevel = resultSet.getString(6);
+        this.emplType = resultSet.getString(7);
+        this.extractSkillTag = resultSet.getString(8);
+        this.jobName = resultSet.getString(9);
+        this.salary = resultSet.getString(10);
+        this.welfare = resultSet.getString(11);
+        this.workingExp = resultSet.getString(12);
+    }
+    // 重写toString方法，用来实现数据从数据库中读出来之后传入到Mapper中时的数据格式，
+    // 然后在Mapper中可以根据分隔符的不同来对数据进行清洗、分析、聚合计算等
+    @Override
+    public String toString() {
+        return id + "|"+city+ "|"+company+ "|"+companySize+ "|"+companyType+"|"+edulevel+ "|"+emplType+ "|"+extractSkillTag+ "|"+jobName+ "|"+salary+ "|"+welfare+ "|"+workingExp;
+    }
+}
+
+3.Mapper类
+// 数据的来源是实体类，所以首先那个实体类要实现序列化（Writable）的方法
+package com.data.test.Mysql_skill;
+
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Mapper;
+
+import java.io.IOException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class MyMapper extends Mapper<Object, sourcePojo, Text, IntWritable> {
+    @Override
+    protected void map(Object key, sourcePojo value, Context context) throws IOException, InterruptedException {
+        // 这里拿到的就是数据库中的一条数据，然后存在了一行中
+        String words = value.toString();
+        // 这是指定分隔符对不同的数据进行分割
+        String[] string = words.split("\\|");
+//        测试：string.length = 12
+//        System.out.println(string.length);
+        // 岗位技能点
+        String skills = string[7];
+        // 使用正则表达式匹配你想要的数据
+        Pattern pattern = Pattern.compile("\'(.*?)\'"); // 利用Pattern对象指定正则
+        Matcher matcher = pattern.matcher(skills); // 利用Matcher进行匹配
+        // 循环依次去取数据，所取到的数据就是你要取到的数据
+        while (matcher.find()){
+            // 根据标识符将一个一个筛出来的数据放到list中
+            String temp = matcher.group();
+            // 对数据中不符合规范的进行清洗
+            temp = temp.replace("\'","");
+            // 对全角与半角字符的处理
+            temp = temp.replace("．",".");
+            // 在循环汇总依次将处理过之后的数据，并设置每一个的值是1
+            context.write(new Text(temp),new IntWritable(1));
+        }
+    }
+}
+4.Reducer类
+package com.data.test.Mysql_skill;
+
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Reducer;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+public class MyReducer extends Reducer<Text,IntWritable, Text, IntWritable> {
+    // 定义一个集合存输出对象，对象中的toString()方法只输出一个count
+    List<outPojo> list = new ArrayList<>();
+    @Override
+    protected void reduce(Text key, Iterable<IntWritable> values, Context context){
+        // 保存每个key的次数和的变量
+        int sum = 0;
+        // 依次循环遍历每一个value（值都是1），然后做和
+        for (IntWritable value : values) {
+            sum += value.get();
+        }
+        // 创建实现了排序接口的对象（当前对象有两个属性：技能点、数量）
+        outPojo outPojo = new outPojo(key.toString(),sum);
+        // 将每个待排序对象加入到list中
+        list.add(outPojo);
+    }
+
+    /**
+     * 当前方法只执行一次，这样实现对数据的操作不再是一组一组输出，而是全部拿到，最后过滤输出。、
+     * 比如这里要求TOP-k就是一个经典的应用
+     */
+    @Override
+    protected void cleanup(Context context) throws IOException, InterruptedException {
+        // 调用list集合的排序方法
+        Collections.sort(list);
+        // 遍历list集合
+        // 设置一个计数器
+        int flag = 0;
+        // 遍历集合中的每一个对象
+        for (outPojo out : list) {
+            // 将对象中封装的技能点字段值利用getter取出来
+            String skill = out.getSkill();
+            // 同理取count字段
+            int count = out.getCount();
+            // 循环依次将数据都写入到context中
+            context.write(new Text(skill),new IntWritable(count));
+            //根据计数器的大小控制输出前10行
+            flag++;
+            // 当flag等于10的时候就返回
+            if (flag == 10)
+                return;
+        }
+    }
+}
+
+5.Main类
+package com.data.test.Mysql_skill;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.lib.db.DBConfiguration;
+import org.apache.hadoop.mapreduce.lib.db.DBInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
+
+import java.io.IOException;
+
+public class Main {
+    public static void main(String[] args) throws IOException, ClassNotFoundException, InterruptedException {
+        Configuration conf = new Configuration();
+        conf.set("fs.defaultFS","hdfs://lky01:9000");
+
+        DBConfiguration.configureDB(conf,"com.mysql.jdbc.Driver",
+                "jdbc:mysql://lky01:3306/migrate","root","123456");
+
+        // 新建一个任务对象
+        Job job = Job.getInstance(conf);
+        job.setJarByClass(Main.class);
+        job.setMapperClass(MyMapper.class);
+        job.setReducerClass(MyReducer.class);
+        // 设置Mapper的输出类型
+        job.setMapOutputKeyClass(Text.class);
+        job.setMapOutputValueClass(IntWritable.class);
+        // 设置Reducer输出类型
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(IntWritable.class);
+
+        // 设置数据的读入的格式
+        job.setInputFormatClass(DBInputFormat.class);
+        DBInputFormat.setInput(job, sourcePojo.class,"select * from zhaopin","select count(1) from zhaopin");
+
+        // 设置数据的输出格式
+        job.setOutputFormatClass(TextOutputFormat.class);
+
+        // 设置与Mysql数据连接的jar的位置(当前的路径是自己在hdfs中创建的，并且上传了对应版本的jar包)
+        job.addArchiveToClassPath(new Path("hdfs://lky01:9000/lib/mysql/mysql-connector-java-5.1.39.jar"));
+
+        // 设置输出路径到hdfs
+        FileSystem fs = FileSystem.get(conf);
+        Path outPath = new Path("/output_wang_skill");
+        if (fs.exists(outPath))
+            fs.delete(outPath,true);
+        FileOutputFormat.setOutputPath(job,outPath);
+        // 提交任务等待完成、
+        System.exit(job.waitForCompletion(true) ? 0 : 1);
+    }
+}
+
